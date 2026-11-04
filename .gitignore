@@ -35,3 +35,4 @@ dist/
 !/tools/ui_release_check.py
 !/tools/modal_pointer_check.py
 !/tools/welcome_layout_check.py
+!/tools/unread_ui_check.py

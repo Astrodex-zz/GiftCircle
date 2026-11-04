@@ -146,3 +146,12 @@ class RevealToken(Base):
     giver_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
     digest: Mapped[str] = mapped_column(String(64),unique=True,index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MessageReadState(Base):
+    """Per-person, per-conversation high-water mark; no message content is copied."""
+    __tablename__='message_read_states'
+    exchange_id: Mapped[int] = mapped_column(ForeignKey('exchanges.id'),primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'),primary_key=True)
+    channel: Mapped[str] = mapped_column(String(8),primary_key=True)
+    last_message_id: Mapped[int] = mapped_column(Integer,default=0)

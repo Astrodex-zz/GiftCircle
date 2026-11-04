@@ -214,6 +214,7 @@ def remove_member(fid:int,uid:int,u:User=Depends(user_or_401),s:DBSession=Depend
     s.execute(delete(WishListState).where(WishListState.exchange_id.in_(ids),WishListState.user_id==uid))
     s.execute(delete(WishAvailability).where(WishAvailability.wish_id.in_(select(Wish.id).where(Wish.exchange_id.in_(ids),Wish.user_id==uid))))
     s.execute(delete(Wish).where(Wish.exchange_id.in_(ids),Wish.user_id==uid))
+    s.execute(delete(MessageReadState).where(MessageReadState.exchange_id.in_(ids),MessageReadState.user_id==uid))
     s.execute(delete(Message).where(Message.exchange_id.in_(ids),Message.sender_id==uid))
     s.execute(delete(Notification).where(Notification.exchange_id.in_(ids),Notification.user_id==uid))
     s.execute(delete(Participant).where(Participant.exchange_id.in_(ids),Participant.user_id==uid))
@@ -225,7 +226,7 @@ def delete_group(fid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
     f=only_owner(s,u,fid)
     ids=list(s.scalars(select(Exchange.id).where(Exchange.family_id==fid)))
     s.execute(delete(PreviousDrawRule).where(or_(PreviousDrawRule.exchange_id.in_(ids),PreviousDrawRule.source_id.in_(ids))))
-    for model in (RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
+    for model in (MessageReadState,RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
         s.execute(delete(model).where(model.exchange_id.in_(ids)))
     s.execute(delete(Exchange).where(Exchange.family_id==fid))
     s.execute(delete(Invitation).where(Invitation.family_id==fid))
@@ -318,7 +319,7 @@ def delete_exchange(eid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db))
     if not e:fail(404,'Exchange not found')
     only_owner(s,u,e.family_id)
     s.execute(delete(PreviousDrawRule).where(or_(PreviousDrawRule.exchange_id==eid,PreviousDrawRule.source_id==eid)))
-    for model in (RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
+    for model in (MessageReadState,RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
         s.execute(delete(model).where(model.exchange_id==eid))
     s.delete(e);s.commit();return {'ok':True}
 
@@ -565,6 +566,59 @@ def purchase(eid:int,wid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)
     if not w or w.exchange_id!=eid:fail(404,'Gift idea not found')
     if w.reserved_by!=u.id:fail(403,'Reserve this item before marking it purchased')
     w.purchased=not w.purchased;s.commit();return {'purchased':w.purchased}
+
+class ReadMessages(BaseModel):
+    through_id:int=Field(ge=1)
+
+
+def conversation_filter(s,u,eid,channel):
+    if channel=='group':return Message.kind.in_(['group','announcement'])
+    if channel not in ('giver','santa'):fail(422,'Unknown conversation')
+    role=Assignment.giver_id if channel=='giver' else Assignment.recipient_id
+    assignment=s.scalar(select(Assignment).where(Assignment.exchange_id==eid,role==u.id))
+    if not assignment:fail(404,'Conversation not found')
+    return and_(Message.kind=='private',Message.assignment_id==assignment.id)
+
+
+@app.get('/api/messages/unread')
+def unread_messages(u:User=Depends(user_or_401),s:DBSession=Depends(db)):
+    counts={}
+    # Three aggregate queries regardless of the number of exchanges or messages.
+    for channel in ('giver','santa','group'):
+        query=(select(Message.exchange_id,func.count(Message.id))
+            .join(Exchange,Exchange.id==Message.exchange_id)
+            .join(Membership,and_(Membership.family_id==Exchange.family_id,Membership.user_id==u.id))
+            .join(Participant,and_(Participant.exchange_id==Exchange.id,Participant.user_id==u.id))
+            .outerjoin(MessageReadState,and_(MessageReadState.exchange_id==Exchange.id,
+                MessageReadState.user_id==u.id,MessageReadState.channel==channel))
+            .where(Message.sender_id!=u.id,Message.id>func.coalesce(MessageReadState.last_message_id,0)))
+        if channel=='group':query=query.where(Message.kind.in_(['group','announcement']))
+        else:
+            role=Assignment.giver_id if channel=='giver' else Assignment.recipient_id
+            query=query.join(Assignment,and_(Assignment.id==Message.assignment_id,
+                Assignment.exchange_id==Exchange.id,role==u.id)).where(Message.kind=='private')
+        for eid,count in s.execute(query.group_by(Message.exchange_id)):
+            counts.setdefault(eid,{'giver':0,'santa':0,'group':0,'total':0})[channel]=count
+            counts[eid]['total']+=count
+    return {'total':sum(row['total'] for row in counts.values()),'exchanges':counts}
+
+
+@app.post('/api/exchanges/{eid}/messages/read/{channel}')
+def read_messages(eid:int,channel:str,body:ReadMessages,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
+    exchange_member(s,u,eid)
+    condition=conversation_filter(s,u,eid,channel)
+    # Only acknowledge a message actually returned by this conversation, never
+    # a future/global ID. A message arriving during the request stays unread.
+    message=s.scalar(select(Message).where(Message.id==body.through_id,Message.exchange_id==eid,condition))
+    if not message:fail(404,'Message not found in this conversation')
+    # Serialise simultaneous acknowledgements (including initial creation).
+    s.scalar(select(Participant).where(Participant.exchange_id==eid,Participant.user_id==u.id).with_for_update())
+    state=s.get(MessageReadState,(eid,u.id,channel))
+    if state:state.last_message_id=max(state.last_message_id,body.through_id)
+    else:s.add(MessageReadState(exchange_id=eid,user_id=u.id,channel=channel,last_message_id=body.through_id))
+    s.commit()
+    return {'ok':True}
+
 
 @app.get('/api/exchanges/{eid}/messages/{assignment_id}')
 def private_messages(eid:int,assignment_id:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):

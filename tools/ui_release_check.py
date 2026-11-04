@@ -15,6 +15,8 @@ window.fetch=async(url,opts={})=>{
  if(path==='/auth/logout'){qa.signedIn=false;return response(result)}
  if(!qa.signedIn)return response({detail:'Please sign in'},false);
  if(path==='/me'){if(method==='PATCH'){qa.profileWrites++;Object.assign(me,data)}result=me}
+ else if(path==='/messages/unread')result={total:0,exchanges:{}};
+ else if(/\/messages\/read\//.test(path))result={ok:true};
  else if(path==='/families')result=qa.removed?[]:[family];
  else if(path==='/families/1')result=family;
  else if(path==='/invites'||path==='/notifications')result=[];

@@ -1,96 +1,109 @@
 # GiftCircle 🎁
 
-**Make memories. Not spreadsheets.** A calm, private, open-source Secret Santa and family gift-exchange application. No ads, tracking, account passwords or affiliate shopping lists.
+A self-hosted, open-source gift exchange app for friends, families and work groups. Built with FastAPI, SQLAlchemy, PostgreSQL and plain JavaScript/CSS. Licensed under MIT.
 
-![Desktop dashboard](tools/ui-dashboard-desktop.png)
+## Features
 
-## Features delivered
+- Email sign-in links, private groups and invitations.
+- Separate exchanges with a budget, date and custom welcome message, including for later invitees.
+- One-to-one gift draws, multiple directional exclusions and protection against repeating a previous draw.
+- Private recipient reveal links with a tap-to-reveal screen.
+- Exchange-specific wish lists, Draft/Finalised status, reservations and purchase tracking.
+- Per-exchange Surprise or Show reservations mode.
+- Anonymous giver/recipient conversations, group chat and email notifications with links to reply in the app.
+- Persistent unread counts for each conversation, exchange and the Messages navigation.
+- Responsive desktop/mobile interface, compact gift rows and an installable app shell.
+- Organiser controls to remove members before a draw, delete an exchange or delete a group and its exchanges.
 
-- Passwordless email magic links (single-use; 20-minute expiry) and 30-day HTTP-only sessions
-- Family groups, email invitations bound to the recipient's email address, and organiser-only controls
-- Reusable groups and separate events, budgets and exchange dates
-- Secret-Santa matching, no self-draws, one-to-one recipient assignment, directional exclusions, impossible-draw validation
-- Sealed assignments: even the organiser cannot view everyone's giver/recipient pairs
-- Personal wish lists with descriptions, external HTTPS/HTTP links and optional price
-- Gift reservations and purchase status hidden from the wish-list owner
-- **Private anonymous two-way conversations** between giver and recipient; separate family chat
-- Organiser announcements and optional email notifications, in-app notification history
-- Mobile-first responsive interface with installable PWA shell, no mandatory app store account
-- Docker Compose, PostgreSQL, optional Mailpit development inbox, Traefik-compatible deployment
-- MIT license and integration tests
+## Public source, private installation
 
-## Architecture
+This repository contains application code, tests and example configuration. It contains no live installation settings, participant records, messages, wish lists, production database or mail credentials.
 
-FastAPI + SQLAlchemy + PostgreSQL backend. The frontend uses **plain, dependency-free JavaScript and CSS** for zero-build offline installation. This is an intentional simplification compared with the earlier React proposal: fewer dependencies, faster self-hosting and no CDN/runtime dependency. If React/TypeScript is required later, the API is separate and can be used unchanged. The UI has been checked in desktop and mobile Chromium with mocked API responses.
+Keep actual configuration in a private `.env` file or your host's secret store. Database volumes, backups, logs and credentials belong outside Git. The `.gitignore` and `.dockerignore` exclude local private files; always review staged changes before committing. Replace example addresses with your own only in private configuration.
 
-## Quick start (Docker)
+## Run locally with Docker and PostgreSQL
 
-1. Copy `.env.example` to `.env` and replace `POSTGRES_PASSWORD` with a random secret. Set `PUBLIC_URL` to the HTTPS URL family members will actually use.
-2. For local development email testing, leave `SMTP_HOST=mailpit` and run:
+1. Copy `.env.example` to `.env`.
+2. Choose a long, random URL-safe `POSTGRES_PASSWORD`. Set `PUBLIC_URL=http://localhost:8187` for local use.
+3. Keep the example Mailpit settings and start the development inbox:
 
-   ```bash
+   ```sh
    docker compose --profile devmail up -d --build
    ```
 
-3. Make your HTTPS reverse proxy forward to `http://127.0.0.1:8187` **on the Docker host**. The app binds only to localhost by default. With Traefik in another Docker network, either route via the host gateway or attach the app to Traefik's network and adjust Compose appropriately.
-4. Open the URL and enter your own email. With development Mailpit, read the magic link in the mail inbox at `http://127.0.0.1:8025` on the Docker host (do not expose the Mailpit UI publicly). If connecting from another computer, use SSH port forwarding or access Mailpit locally.
-5. Sign in, create a family, invite relatives, add an exchange and draw names after everyone joins.
+4. Open <http://localhost:8187>. Enter an email address and retrieve its sign-in link from Mailpit at <http://localhost:8025>.
 
-**Important:** Development Mailpit captures messages; it does not send to real family inboxes. To go live, enter your actual SMTP host, authenticated username, app password/token and `MAIL_FROM` address in your private `.env` file; then run `docker compose up -d --build` **without** the `devmail` profile. Use your provider's TLS options (`SMTP_SSL=true` on port 465 or `SMTP_STARTTLS=true` on port 587, as applicable). Never send me credentials or commit `.env` to GitHub.
+Mailpit captures mail locally; it does not deliver to real inboxes. The app and Mailpit ports bind to the Docker host's loopback interface. Do not expose the development inbox publicly.
 
-Only one sending address is required. Real family members use their personal emails for invitations and magic links. Outbound mail should be sent from a domain verified with SPF/DKIM/DMARC for deliverability.
+## Local Python development
 
-### Local Python development (SQLite)
+Python 3.12+ is recommended. SQLite is convenient for local development; PostgreSQL is the production deployment database.
 
-```bash
+```sh
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-export DATABASE_URL=sqlite:///$(pwd)/local.db
+export DATABASE_URL=sqlite:///./local.db
 export PUBLIC_URL=http://127.0.0.1:8000
 export MAIL_MODE=log
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-`MAIL_MODE=log` writes one-time links into application logs for local development **only**. Do not use that mode on a public server.
+On Windows PowerShell, create the environment and install requirements using `.venv/Scripts/python.exe`, then run `./start-local.ps1`. Sign-in links appear in the ignored `tools/server-mail.log` file. The local script runs in the background; restarting is necessary after Python changes.
 
-## Testing
+`MAIL_MODE=log` is for isolated development only: it writes sign-in and invitation links to local logs. Never use it for a public installation.
 
-```bash
+## Deploy with real email
+
+- Set `PUBLIC_URL` to your installation's HTTPS address in the private `.env` file.
+- Put an HTTPS reverse proxy in front of the app's loopback port, or connect it over a private Docker network.
+- Set `MAIL_MODE=smtp`, the provider's SMTP host, port and private credentials. Use `SMTP_STARTTLS=true` for STARTTLS or `SMTP_SSL=true` for implicit TLS, as required by your provider.
+- Set `MAIL_FROM` to an address the provider authorises. Use the provider's supported authentication method; do not put your ordinary email password in the repository.
+- Start with `docker compose up -d --build` without the development inbox profile.
+- Back up the PostgreSQL database and private configuration. Keep a separate backup copy and test restoration before relying on it.
+
+Emails include plain text and HTML, a date and unique message ID. Deliverability also depends on the sending provider, domain authentication and recipient filtering; inbox placement cannot be guaranteed. Replies to notification emails are **not** imported. Each notification links to the correct in-app conversation.
+
+## Tests
+
+```sh
+# Set before importing the app so startup uses a disposable local database.
+export DATABASE_URL=sqlite:///./test-bootstrap.db
 pytest -q tests
 node --check app/static/app.js
-python tools/ui_smoke.py
+python tools/ui_release_check.py
+python tools/unread_ui_check.py
+python tools/modal_pointer_check.py
+python tools/welcome_layout_check.py
 ```
 
-The Python integration suite uses isolated temporary SQLite databases and exercises signup, email invitation acceptance, three-person drawing, exclusions, wish lists, reservations, purchases, anonymous message exchange, permissions and sign-out. `ui_smoke.py` runs desktop/mobile Chromium interactions using a deterministic mock API, checking responsive layout and click flows.
+The API suite uses isolated temporary databases and captures email locally. It covers authentication, membership, invitations, draws, exclusions, privacy, wish lists, reservations, deletion, reveal links and per-user unread state. It has also been run against an isolated PostgreSQL database. Never point tests at a database you want to keep.
 
-`tools/browser_walkthrough.py` is a live-server Chromium walkthrough, provided for running on your own machine. It was **not executable in the build environment** because the managed Chromium browser blocks navigation to all URLs. No claim of full live-browser end-to-end verification is made. Docker/PostgreSQL/real SMTP delivery also require verification on a Docker-equipped machine.
+The browser checks use Playwright with headless Microsoft Edge (`channel='msedge'`) and a synthetic API; they send no real email and use no production accounts. Install Edge or adapt the launch channel to your installed Playwright browser. Generated screenshots remain ignored. Checks cover desktop, tablet and narrow phone layouts, unread navigation, drafts, composer sizing, dialogs and key user flows.
 
-## Privacy model
+## Privacy and permissions
 
-- Sessions are random, hashed server-side and sent as `HttpOnly` `SameSite=Lax` cookies, with `Secure` enabled when `PUBLIC_URL` is HTTPS.
-- Magic links and invitations contain single-use random tokens, stored hashed; invite acceptance requires signing in with the invited email.
-- Family membership is checked on every exchange request.
-- Assignment endpoints only reveal the viewer's own recipient and own anonymous conversation IDs. Another family member cannot fetch someone else's secret conversation or wish list.
-- Anonymous message API returns only whether each message was authored by the current viewer, never a hidden sender ID. Email notifications contain neither the sender's name nor the private message body.
-- Gift reservations and purchase status are not returned to the wish list's owner.
-- Browser-typed text is escaped before insertion into the DOM; product links allow only HTTP(S).
-- Group owners can publish announcements and configure matching, but have no privileged access to other participants' secret chats.
-- Sensible security headers, a 15-minute email-request rate limit, foreign-Origin rejection and no-cache API responses are enabled.
+- Session and authentication tokens are stored hashed. Sessions use HttpOnly, SameSite cookies and Secure cookies when `PUBLIC_URL` uses HTTPS.
+- Magic sign-in links expire after 20 minutes and can be used once. Invitations require the invited email account.
+- Every exchange request checks group membership and participation. Only the organiser can change reservation mode, exclusions or run the draw.
+- Organisers cannot use the app to read other people's anonymous conversations or reveal all assignments. A server/database operator necessarily has access to stored data; this is not end-to-end encryption.
+- A recipient's giver identity stays hidden. In Surprise mode their reservations stay hidden too. In Show reservations mode the recipient sees reserved items without the giver's identity.
+- A draw email's private reveal link can show its recipient without signing in. Anyone possessing that link can see that one recipient until it expires (30 days) or the exchange is deleted; keep it private.
+- Deleting a group deletes its exchanges and associated records for all participants. Deleting an exchange leaves the group and other exchanges intact. Backups are managed separately by the installation owner.
 
-## Operational notes and intentional V1 boundaries
+## Operational boundaries
 
-- **Do not change an exchange after drawing.** A new exchange must be created to avoid breaking secret conversation identity and reservations. Invitees joining after a draw can join the family but are not retroactively added to that exchange.
-- Family chat and anonymous chats use a lightweight 8-second browser refresh rather than WebSockets.
-- Push notifications, replying directly to emails, file attachments, historical-pair avoidance, passkeys, support for different currencies, granular participation selection and database migration tooling are future improvements.
-- The app uses a create-on-start schema, appropriate for the initial release; back up PostgreSQL before applying future schema upgrades. Add versioned migrations before major multi-version deployments.
-- When deploying publicly, put HTTPS in front, back up the PostgreSQL volume, use a reliable SMTP provider, keep Python/PostgreSQL images updated and test recoveries.
-- The API tests currently run with SQLite; PostgreSQL configuration is included, but a PostgreSQL container could not be launched in the authoring environment because Docker was unavailable.
+- Draws are final. Create a new exchange rather than resetting a completed draw. People joining later join the group and its undrawn exchanges.
+- Read positions are saved per user, exchange and conversation. Opening one conversation leaves the others unread. Messages written before unread tracking was installed initially appear unread until opened.
+- Unread badges refresh approximately every eight seconds while the app is visible. Polling preserves drafts and avoids replacing a chat while you are reading earlier messages.
+- The service worker caches static assets only. Sign-in, messages and other app functions require a connection.
+- The schema is created on startup. Current additive features use separate tables; introduce versioned migrations before changes to existing columns or more complex upgrades.
+- Attachments, incoming email replies, push notifications and multiple currencies are not implemented.
 
-## Traefik example
+## Contributing
 
-When Traefik runs outside the GiftCircle Compose project, you can point a Traefik service URL to `http://<docker-host-lan-ip>:8187` only after adjusting the binding to permit traffic from the proxy. **Do not** expose the plaintext backend port to the public internet. A shared Docker network and Traefik labels is preferable; modify `compose.yaml` appropriately for your network and hostname.
+Use fictional data and example addresses in tests, keep credentials out of commits, and run the relevant checks before submitting changes. Review privacy and organiser/participant permissions whenever adding an endpoint.
 
 ## License
 
-MIT — see `LICENSE`.
+[MIT](LICENSE), copyright GiftCircle contributors.

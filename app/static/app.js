@@ -4,7 +4,7 @@ const $ = (s,root=document)=>root.querySelector(s);
 const esc = s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = v=>'$'+Number(v||0).toLocaleString('en-AU');
 const glyph = {home:'⌂',wish:'♡',chat:'☏',family:'♧',alerts:'♧',settings:'⚙',gift:'🎁',mail:'✉',plus:'＋'};
-const appState={me:null,families:[],invitations:[],fid:null,exchanges:[],eid:null,exchange:null,page:'home',chat:'giver',sending:false};
+const appState={me:null,families:[],invitations:[],fid:null,exchanges:[],eid:null,exchange:null,page:'home',chat:'giver',sending:false,unread:{total:0,exchanges:{}}};
 const namePrompted=new Set();
 let modalOpen=false,refreshing=false,toastTimer=null;
 async function api(path,opts={}){
@@ -16,7 +16,27 @@ async function api(path,opts={}){
 const send=(path,body,method='POST')=>api(path,{method,body:JSON.stringify(body)});
 function toast(msg,error=false){clearTimeout(toastTimer);$('#toast')?.remove();const n=document.createElement('div');n.id='toast';n.className='toast'+(error?' error':'');n.textContent=msg;document.body.append(n);toastTimer=setTimeout(()=>n.remove(),4600)}
 function h(head,sub='',actions=''){return `<header class="page-head"><div><div class="eyebrow">${esc(sub||'GiftCircle')}</div><h1>${esc(head)}</h1></div>${actions?`<div class="header-actions">${actions}</div>`:''}</header>`}
-function btn(label,act,type='secondary',size=''){return `<button type="button" class="btn ${type} ${size}" data-action="${act}">${label}</button>`}
+function btn(label,act,type='secondary',size=''){if(act.endsWith(':messages'))label+=unreadBadge(act.split(':')[1]);return `<button type="button" class="btn ${type} ${size}" data-action="${act}">${label}</button>`}
+const planeIcon='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>';
+const mailIcon='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>';
+function unreadCount(eid='all',channel='total'){return eid==='all'?appState.unread.total||0:appState.unread.exchanges?.[eid]?.[channel]||0}
+function unreadBadge(eid='all',channel='total'){const n=unreadCount(eid,channel);return `<span class="unread-badge" data-unread-eid="${eid}" data-unread-channel="${channel}" aria-label="${n} unread messages" ${n?'':'hidden'}>${n}</span>`}
+function paintUnread(){
+ document.querySelectorAll('[data-unread-eid]').forEach(b=>{const n=unreadCount(b.dataset.unreadEid,b.dataset.unreadChannel);b.textContent=n;b.hidden=!n;b.setAttribute('aria-label',n+' unread messages');b.closest('button')?.classList.toggle('has-unread',n>0)});
+ document.querySelectorAll('#exchange-select option').forEach(o=>{const e=appState.exchanges.find(x=>x.id===Number(o.value));if(e)o.textContent=e.name+' · '+e.family_name+(unreadCount(e.id)?' ('+unreadCount(e.id)+' unread)':'')});
+}
+let unreadRequest=0;
+async function refreshUnread(){const request=++unreadRequest;const result=await api('/messages/unread');if(request===unreadRequest){appState.unread=result;paintUnread()}}
+async function acknowledgeMessages(body){
+ if(!body||!body.dataset.through||document.hidden||appState.page!=='messages'||body!==$('#chat-body'))return;
+ const {eid,channel,through}=body.dataset;
+ try{await send(`/exchanges/${eid}/messages/read/${channel}`,{through_id:Number(through)});await refreshUnread()}catch{/* Retry on the next visible refresh. */}
+}
+async function openMessages(eid=null){
+ const selected=appState.exchanges.find(e=>e.id===Number(eid))||appState.exchanges.find(e=>e.id===appState.eid&&unreadCount(e.id))||appState.exchanges.find(e=>unreadCount(e.id))||appState.exchanges.find(e=>e.id===appState.eid)||appState.exchanges[0];
+ if(selected){appState.eid=selected.id;appState.fid=selected.family_id;appState.chat=['giver','santa','group'].find(c=>unreadCount(selected.id,c))||'giver'}
+ appState.page='messages';await sync(true);
+}
 function card(inner,classes=''){return `<section class="card ${classes}">${inner}</section>`}
 function empty(icon,title,detail,action=''){return `<div class="empty"><div class="em-icon">${icon}</div><h3>${esc(title)}</h3><p>${esc(detail)}</p>${action}</div>`}
 function popup(title,desc,body,submitLabel,onSubmit){
@@ -42,6 +62,7 @@ async function sync(force=false){
   appState.invitations=await api('/invites');
   if(!appState.families.some(f=>f.id===appState.fid))appState.fid=appState.families[0]?.id||null;
   appState.exchanges=await api('/exchanges');
+  await refreshUnread();
   if(!appState.exchanges.some(x=>x.id===appState.eid))appState.eid=(appState.page==='family'?appState.exchanges.find(x=>x.family_id===appState.fid):appState.exchanges[0])?.id||null;
   const routeExchange=location.hash.match(/^#exchanges\/(\d+)$/);
   if(routeExchange&&appState.page==='family'&&appState.exchanges.some(x=>x.id===Number(routeExchange[1])))appState.fid=appState.exchanges.find(x=>x.id===Number(routeExchange[1])).family_id;
@@ -60,14 +81,14 @@ function renderAuth(msg=''){
  $('#app').innerHTML=authLanding(msg);
  $('#login-form').onsubmit=async e=>{e.preventDefault();const btn=$('#login-submit');btn.disabled=true;btn.textContent='Sending…';try{await send('/auth/request',{email:$('#email').value,return_to:location.hash});renderAuth('Sign-in link sent. Check your inbox (and spam folder).')}catch(err){toast(err.message,true);btn.disabled=false;btn.textContent='Send sign-in link →'}};
 }
-function navLink(page,title,g){return `<button class="${appState.page===page?'active':''}" data-page="${page}"><span class="glyph">${g}</span>${title}</button>`}
+function navLink(page,title,g){return `<button class="${appState.page===page?'active':''}" data-page="${page}"><span class="glyph">${g}</span>${title}${page==='messages'?unreadBadge():''}</button>`}
 function editName(first=false){
  popup(first?'What should we call you?':'Edit your name',`Signed in as ${appState.me.email}`,`<div class="field"><label for="display-name">Your name</label><input id="display-name" name="name" autocomplete="name" required maxlength="100" value="${esc(appState.me.name)}"></div>`,'Save name',async f=>{await send('/me',{name:f.get('name'),notify_email:appState.me.notify_email},'PATCH');toast('Name saved')});
 }
 function accountIdentity(){return `<div class="account-identity" aria-label="Signed-in account"><span class="muted-label">Signed in as</span><div class="account-name-row"><strong>${esc(appState.me.name)}</strong><button class="name-edit" data-action="edit-name" aria-label="Edit your name" title="Edit your name">✎</button>${!appState.me.name_confirmed?btn('Add name','edit-name','outline small'):''}</div><span class="account-email">${esc(appState.me.email)}</span><div class="account-signout">${btn("Sign out","logout","account-signout-button")}</div></div>`}
 function shell(body){
  const initials=appState.me.name.slice(0,1).toUpperCase();
- return `<div class="shell"><aside class="sidebar"><a href="/" class="logo"><span class="logo-mark">♔</span> giftcircle<span style="color:#e2b772">.</span></a><div><div class="side-label">YOUR SPACE</div><nav class="nav">${navLink('home','Overview','⌂')}${navLink('messages','Messages','☏')}${navLink('groups','Groups','♧')}${navLink('alerts','Notifications','♢')}${navLink('settings','Settings','⚙')}</nav></div><div><div class="side-label">YOUR EXCHANGES</div><div class="exchange-list">${appState.exchanges.map(x=>`<button data-exchange="${x.id}" class="${x.id===appState.eid?'active':''}"><span>🎁</span><span>${esc(x.name)}</span></button>`).join('')||'<span class="dim tiny" style="padding:0 13px">No exchanges yet</span>'}</div></div><div class="sidebar-bottom"><div class="avatar">${esc(initials)}</div><div class="grow"><div class="who">${esc(appState.me.name)}</div><div class="email">${esc(appState.me.email)}</div></div></div></aside><div class="mobile-head"><span class="logo"><span class="logo-mark">♔</span> giftcircle<span style="color:#e2b772">.</span></span><div class="avatar" style="width:31px;height:31px" data-page="settings">${esc(initials)}</div></div><main class="main" id="content">${accountIdentity()}${body}</main><nav class="mobile-bar">${[['home','⌂','Home'],['messages','☏','Messages'],['groups','♧','Groups'],['settings','⚙','More']].map(x=>`<button data-page="${x[0]}" class="${appState.page===x[0]?'active':''}"><span class="glyph">${x[1]}</span>${x[2]}</button>`).join('')}</nav></div>`;
+ return `<div class="shell"><aside class="sidebar"><a href="/" class="logo"><span class="logo-mark">♔</span> giftcircle<span style="color:#e2b772">.</span></a><div><div class="side-label">YOUR SPACE</div><nav class="nav">${navLink('home','Overview','⌂')}${navLink('messages','Messages',mailIcon)}${navLink('groups','Groups','♧')}${navLink('alerts','Notifications','♢')}${navLink('settings','Settings','⚙')}</nav></div><div><div class="side-label">YOUR EXCHANGES</div><div class="exchange-list">${appState.exchanges.map(x=>`<button data-exchange="${x.id}" class="${x.id===appState.eid?'active':''}"><span>🎁</span><span>${esc(x.name)}</span>${unreadBadge(x.id)}</button>`).join('')||'<span class="dim tiny" style="padding:0 13px">No exchanges yet</span>'}</div></div><div class="sidebar-bottom"><div class="avatar">${esc(initials)}</div><div class="grow"><div class="who">${esc(appState.me.name)}</div><div class="email">${esc(appState.me.email)}</div></div></div></aside><div class="mobile-head"><span class="logo"><span class="logo-mark">♔</span> giftcircle<span style="color:#e2b772">.</span></span><div class="avatar" style="width:31px;height:31px" data-page="settings">${esc(initials)}</div></div><main class="main" id="content">${accountIdentity()}${body}</main><nav class="mobile-bar">${[['home','⌂','Home'],['messages',mailIcon,'Messages'],['groups','♧','Groups'],['settings','⚙','More']].map(x=>`<button data-page="${x[0]}" class="${appState.page===x[0]?'active':''}"><span class="glyph">${x[1]}</span>${x[2]}${x[0]==='messages'?unreadBadge():''}</button>`).join('')}</nav></div>`;
 }
 function exchangeSelect(){return `<label class="exchange-picker" for="exchange-select"><span>Exchange</span><select class="select-inline" id="exchange-select">${appState.exchanges.map(e=>`<option value="${e.id}" ${e.id===appState.eid?'selected':''}>${esc(e.name)} · ${esc(e.family_name)}</option>`).join('')}</select></label>`;}
 
@@ -88,7 +109,7 @@ function recipientSpotlight(e){
 }
 function overviewExchangeCard(e){
  const admin=appState.families.find(f=>f.id===e.family_id)?.owner_id===appState.me.id;
- return card(`<div class="flex between wrap"><span class="eyebrow" style="margin:0">Gift exchange</span><span class="pill">${e.drawn?'Names drawn':'Preparing'}</span></div><h3 class="exchange-card-title">${esc(e.family_name)} · ${esc(e.name)} <span aria-hidden="true">✨</span></h3>${recipientSpotlight(e)}<p class="dim tiny">${e.exchange_date?'Gift day: '+esc(e.exchange_date)+' · ':''}${money(e.budget)} gift budget</p><p class="dim">${e.drawn?'Names have been drawn. Open your wish list or messages to plan your gifts.':admin?'Invite your group and draw names when everyone is ready.':'Your organiser will draw names when everyone is ready.'}</p><div class="flex wrap">${btn('♡ &nbsp; My Wish List',`exchange-page:${e.id}:wishes`,'primary')}${btn('☏ &nbsp; Messages',`exchange-page:${e.id}:messages`,'outline')}${btn('♧ &nbsp; Group',`exchange-page:${e.id}:family`,'outline')}</div>`,'recipient-card overview-exchange-card').replace('<section ',`<section data-exchange="${e.id}" tabindex="0" role="link" aria-label="Open ${esc(e.family_name)} · ${esc(e.name)}" `);
+ return card(`<div class="flex between wrap"><span class="eyebrow" style="margin:0">Gift exchange</span><span class="pill">${e.drawn?'Names drawn':'Preparing'}</span></div><h3 class="exchange-card-title">${esc(e.family_name)} · ${esc(e.name)} <span aria-hidden="true">✨</span></h3>${recipientSpotlight(e)}<p class="dim tiny">${e.exchange_date?'Gift day: '+esc(e.exchange_date)+' · ':''}${money(e.budget)} gift budget</p><p class="dim">${e.drawn?'Names have been drawn. Open your wish list or messages to plan your gifts.':admin?'Invite your group and draw names when everyone is ready.':'Your organiser will draw names when everyone is ready.'}</p><div class="flex wrap">${btn('♡ &nbsp; My Wish List',`exchange-page:${e.id}:wishes`,'primary')}${btn(mailIcon+' Messages',`exchange-page:${e.id}:messages`,'outline')}${btn('♧ &nbsp; Group',`exchange-page:${e.id}:family`,'outline')}</div>`,'recipient-card overview-exchange-card').replace('<section ',`<section data-exchange="${e.id}" tabindex="0" role="link" aria-label="Open ${esc(e.family_name)} · ${esc(e.name)}" `);
 }
 function homeScreen(){
  const current=appState.exchanges.filter(e=>!isPastExchange(e));
@@ -132,16 +153,16 @@ async function wishesScreen(ownerOverride=null,embedded=false){const e=appState.
 async function messagesScreen(){const e=appState.exchange;if(!e)return h('Messages')+empty('☏','No exchange yet','Join an exchange to start chatting.');
  const modes=[...(e.my_assignment?[['giver','My recipient']]:[]),...(e.my_santa_conversation?[['santa','My Mystery Gifter']]:[]),['group','Group chat']];
  if(!modes.some(x=>x[0]===appState.chat))appState.chat=modes[0][0];
- const tabs=`<div class="tabstrip" style="margin-bottom:17px">${modes.map(([id,label])=>`<button data-chat="${id}" class="${appState.chat===id?'active':''}">${esc(label)}</button>`).join('')}</div>`;
+ const tabs=`<div class="tabstrip message-tabs" style="margin-bottom:17px">${modes.map(([id,label])=>`<button data-chat="${id}" class="${appState.chat===id?'active':''}">${esc(label)}${unreadBadge(e.id,id)}</button>`).join('')}</div>`;
  let label='',description='',records=[],kind=appState.chat;
  if(kind==='group'){
   label='Group conversation';description='Everyone in '+e.name+' can read this conversation.';records=await api(`/exchanges/${e.id}/group-messages`);
  }else{
   const id=kind==='giver'?e.my_assignment?.assignment_id:e.my_santa_conversation;
-  if(id){const result=await api(`/exchanges/${e.id}/messages/${id}`);label=result.label;description=kind==='giver'?'Your identity stays hidden from your recipient.':'You can reply without knowing who your Santa is.';records=result.messages}
+  if(id){const result=await api(`/exchanges/${e.id}/messages/${id}`);label=result.label;description=kind==='giver'?'Your identity stays hidden from your recipient.':'You can reply without knowing who your gift giver is.';records=result.messages}
  }
  const messages=records.map(m=>`<div class="chat-entry ${m.mine?'mine':''}"><div class="bubble">${esc(m.content)}</div><div class="meta">${kind==='group'&&!m.mine?esc(m.name)+' · ':''}${m.mine?'You · ':''}${esc(m.created_at?new Date(m.created_at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'')}</div></div>`).join('');
- return exchangePageHeader('Messages',e)+tabs+(kind!=='group'?`<div class="info-banner">♙ &nbsp; Anonymous conversation. Only you and the other participant can see these messages. The organiser cannot read them.</div>`:'')+`<div class="card chat"><div class="chat-heading"><span class="tile-icon">${kind==='group'?'♧':'☏'}</span><div><strong>${esc(label)}</strong><div class="sub">${esc(description)}</div></div></div><div class="chat-body" id="chat-body">${messages||`<div class="empty"><div class="em-icon">✉</div><h3>No messages yet</h3><p>${kind==='group'?'Say hello to your group!':'Send a friendly question to get the conversation started.'}</p></div>`}</div><form class="composer" id="message-form"><textarea aria-label="Write a message" name="message" placeholder="Write a message…" required maxlength="3000"></textarea><button class="btn" type="submit">Send →</button></form></div>`;
+ return exchangePageHeader('Messages',e)+tabs+(kind!=='group'?`<div class="info-banner">♙ &nbsp; Anonymous conversation. Only you and the other participant can see these messages. The organiser cannot read them.</div>`:'')+`<div class="card chat"><div class="chat-heading"><span class="tile-icon">${kind==='group'?'♧':mailIcon}</span><div><strong>${esc(label)}</strong><div class="sub">${esc(description)}</div></div></div><div class="chat-body" id="chat-body" data-eid="${e.id}" data-channel="${kind}" data-through="${records.length?records[records.length-1].id:''}">${messages||`<div class="empty"><div class="em-icon">${mailIcon}</div><h3>No messages yet</h3><p>${kind==='group'?'Say hello to your group!':'Send a friendly question to get the conversation started.'}</p></div>`}</div><form class="composer" id="message-form"><textarea aria-label="Write a message" name="message" placeholder="Write a message…" required maxlength="3000"></textarea><button class="btn send-message" type="submit" aria-label="Send message" title="Send message">${planeIcon}</button></form></div>`;
 }
 function exclusionSummary(e,preview=false){
  const pairs=e.exclusions||[], source=(e.previous_draws||[]).find(x=>x.id===e.previous_draw_id);
@@ -173,7 +194,7 @@ async function familyScreen(){
  const wishSections=e?await Promise.all([wishesScreen(appState.me.id,true),e.my_assignment?wishesScreen(e.my_assignment.recipient_id,true):Promise.resolve('<p class="compact-empty">Your recipient’s gift ideas will appear here once names are drawn.</p>')]):[];
  const wishPanels=e?card(wishSections[0],'own-compact-wishlist'):'';
  const groupActions=btn('← All groups','groups','outline')+(admin?btn('＋ &nbsp; New exchange','new-exchange','primary'):'')+btn('＋ &nbsp; New group','new-family','outline');
- return (e?`<header class="page-head exchange-page-title"><div><div class="eyebrow">Your exchange</div><div class="exchange-title-line"><h1>${esc(e.name)}</h1>${btn('☏ &nbsp; Messages',`exchange-page:${e.id}:messages`,'primary exchange-message-button')}</div></div><div class="header-actions">${groupActions}</div></header>`:h(f.name,'Your group',groupActions))+
+ return (e?`<header class="page-head exchange-page-title"><div><div class="eyebrow">Your exchange</div><div class="exchange-title-line"><h1>${esc(e.name)}</h1>${btn(mailIcon+' Messages',`exchange-page:${e.id}:messages`,'primary exchange-message-button')}</div></div><div class="header-actions">${groupActions}</div></header>`:h(f.name,'Your group',groupActions))+
  (e?card(`<div class="flex between wrap"><span class="eyebrow">${esc(f.name)}</span><span class="pill">${e.drawn?'Names drawn':'Preparing'}</span></div>${recipientSpotlight(e)}<p class="dim">${e.exchange_date?'Gift day: '+esc(e.exchange_date)+' · ':''}${money(e.budget)} gift budget</p>${wishSections[1]}`,'recipient-card exchange-focus compact-exchange-focus'):'')+wishPanels+
  `<div class="two-col"><div class="stack">${card(`<div class="flex between"><div><div class="eyebrow">Group</div><h2 class="card-title" style="font-size:23px">${esc(f.name)}</h2></div><span class="pill">${admin?'Admin':'Member'}</span></div><details class="exchange-members"><summary>View group members (${detail.members.length})</summary><h3 class="card-title">Members (${detail.members.length})</h3>${detail.members.map(m=>`<div class="list-row"><div class="flex"><div class="avatar">${esc(m.name.slice(0,1).toUpperCase())}</div><strong style="font-size:13px">${esc(m.name)}</strong></div>${m.id===f.owner_id?'<span class="pill">Admin</span>':admin?btn('Remove','remove-member:'+m.id,'outline small'):''}</div>`).join('')}${admin?`<div style="margin-top:19px">${btn('＋ Invite group member','invite','primary')}</div>${detail.pending.length?`<div class="separation"></div><h3 class="card-title">Invitations pending</h3>${detail.pending.map(p=>`<div class="list-row"><span class="tiny dim">${esc(p.email)}</span><span class="pill gold">Pending</span></div>`).join('')}`:''}`:''}</details>`)}
  ${e?card(`<div class="flex between wrap"><span class="pill">${e.reservation_mode==='show'?'Show reservations':'Surprise mode'}</span>${admin?btn('Change reservation mode','reservation-mode','outline small'):''}</div><div class="separation"></div><div class="flex between"><h2 class="card-title">${esc(e.name)} · Draw settings</h2><span class="pill ${e.drawn?'':'gold'}">${e.drawn?'Names drawn':'Not drawn'}</span></div><p class="dim tiny">${e.participants.length} participants · ${money(e.budget)} budget ${e.exchange_date?'· '+esc(e.exchange_date):''}</p>${admin&&!e.drawn?`<div class="separation"></div>${exclusionSummary(e)}<div class="flex wrap" style="margin-top:20px">${btn('Edit exclusions','exclusions','outline')}${btn('Draw names','draw','primary')}</div>`:`<div class="info-banner">${e.drawn?'♙ The names are sealed and private. You cannot reveal everyone’s assignments or reset a draw that has begun.':'Your organiser will draw names once everyone has joined.'}</div>`}`):''}
@@ -182,26 +203,31 @@ async function familyScreen(){
 async function alertsScreen(){const n=await api('/notifications');return h('Notifications','Your latest updates')+(n.length?card(n.map(x=>`<div class="list-row"><div><strong style="font-size:13px">${esc(x.title)}</strong><div class="dim tiny" style="margin-top:3px">${esc(x.detail)}</div><div class="dim tiny">${new Date(x.created_at).toLocaleDateString()}</div></div>${x.read?'<span class="pill gray">Read</span>':`<button class="btn secondary small" data-read="${x.id}">Mark read</button>`}</div>`).join('')):card(empty('♢','All caught up!','When something happens in your gift exchange, it appears here.')))}
 function settingsScreen(){return h('Your settings','The personal touches')+card(`<div class="profile-box"><h2 class="card-title">Your profile</h2><form id="profile-form"><div class="field"><label>Display name</label><input name="name" required maxlength="100" value="${esc(appState.me.name)}"></div><div class="field"><label>Email address</label><input disabled value="${esc(appState.me.email)}"></div><label class="flex tiny"><input type="checkbox" name="notify_email" ${appState.me.notify_email?'checked':''}> Send email notifications for invitations, private messages and announcements.</label><div style="margin-top:25px" class="flex wrap"><button class="btn" type="submit">Save settings</button>${btn('Sign out','logout','outline')}</div></form><div class="separation"></div><p class="dim tiny">GiftCircle is self-hosted, free and open source. Only organisers control their group space. Your conversations remain private.</p></div>`);
 }
+let renderVersion=0,lastRenderedRoute=null;
 async function render(){
+ const version=++renderVersion;
  if(!appState.me){renderAuth();return}
  let content='';
  try{if(appState.page==='home')content=homeScreen();else if(appState.page==='past-exchanges')content=pastExchangesScreen();else if(appState.page==='wishes')content=await wishesScreen();else if(appState.page==='messages')content=await messagesScreen();else if(appState.page==='groups')content=h('Your groups','Your circle',btn('＋ Create group','new-family','primary'))+groupsOverview();else if(appState.page==='family')content=await familyScreen();else if(appState.page==='exclusions')content=exclusionsScreen();else if(appState.page==='alerts')content=await alertsScreen();else if(appState.page==='settings')content=settingsScreen();else content=homeScreen()}
  catch(err){content=card(empty('!','Something went wrong',err.message,btn('Try again','refresh','primary')))}
+ if(version!==renderVersion)return;
  const route=appState.page==='messages'&&appState.eid?'messages/'+appState.eid+'/'+appState.chat:appState.page==='family'?(appState.exchange?.family_id===appState.fid?'exchanges/'+appState.eid:'groups/'+appState.fid):appState.page;
  if(location.hash!=='#'+route)history.pushState({},'','#'+route);
- $('#app').innerHTML=shell(content);
+ $('#app').innerHTML=shell(content);paintUnread();
+ if(lastRenderedRoute!==route){window.scrollTo(0,0);lastRenderedRoute=route}
  const select=$('#exchange-select');if(select)select.onchange=async e=>{appState.eid=Number(e.target.value);appState.wishTarget=null;await sync(true)};
  const exclusions=$('#exclusion-form');if(exclusions){
  exclusions.onchange=()=>{const d=new FormData(exclusions);const preview={...appState.exchange,exclusions:d.getAll('pair').map(v=>{const [giver_id,recipient_id]=v.split(':').map(Number);return {giver_id,recipient_id}}),previous_draw_id:d.has('use_history')?Number(d.get('previous_draw_id')):null};$('#exclusion-preview').innerHTML=exclusionSummary(preview,true);$('#exclusion-status').textContent='Unsaved changes — save before leaving this page.'};
  exclusions.onsubmit=async ev=>{ev.preventDefault();const b=exclusions.querySelector('button[type="submit"]');b.disabled=true;try{const d=new FormData(exclusions);await send(`/exchanges/${appState.eid}/exclusions`,{pairs:d.getAll('pair').map(v=>{const [giver_id,recipient_id]=v.split(':').map(Number);return {giver_id,recipient_id}}),previous_draw_id:d.has('use_history')?Number(d.get('previous_draw_id')):null},'PUT');toast('Exclusions saved');await sync(true)}catch(err){$('#exclusion-status').textContent=err.message;b.disabled=false}};
  }
- const body=$('#chat-body');if(body)body.scrollTop=body.scrollHeight;
+ const body=$('#chat-body');if(body){body.scrollTop=body.querySelector('.chat-entry')?body.scrollHeight:0;acknowledgeMessages(body)}
  const msg=$('#message-form');if(msg)msg.onsubmit=async ev=>{ev.preventDefault();const value=msg.querySelector('textarea[name="message"]').value.trim();if(!value)return;const b=msg.querySelector('button');b.disabled=true;try{const e=appState.exchange;if(appState.chat==='group')await send(`/exchanges/${e.id}/group-messages`,{content:value});else await send(`/exchanges/${e.id}/messages/${appState.chat==='giver'?e.my_assignment.assignment_id:e.my_santa_conversation}`,{content:value});await render()}catch(err){toast(err.message,true);b.disabled=false}};
  const prof=$('#profile-form');if(prof)prof.onsubmit=async ev=>{ev.preventDefault();try{await send('/me',{name:prof.querySelector('[name="name"]').value,notify_email:prof.querySelector('[name="notify_email"]').checked},'PATCH');toast('Settings saved');await sync(true)}catch(err){toast(err.message,true)}};
 }
 async function act(name){
+ if(name==='messages'){await openMessages();return}
  if(name==='edit-name'){editName();return}
- if(name.startsWith('exchange-page:')){const [,id,page]=name.split(':');const e=appState.exchanges.find(e=>e.id===Number(id));if(!e)return;appState.eid=e.id;appState.fid=e.family_id;appState.wishTarget=null;appState.chat='giver';appState.page=page;if(page==='family')history.replaceState({},'','#exchanges/'+e.id);await sync(true);return}
+ if(name.startsWith('exchange-page:')){const [,id,page]=name.split(':');if(page==='messages'){await openMessages(id);return}const e=appState.exchanges.find(e=>e.id===Number(id));if(!e)return;appState.eid=e.id;appState.fid=e.family_id;appState.wishTarget=null;appState.chat='giver';appState.page=page;if(page==='family')history.replaceState({},'','#exchanges/'+e.id);await sync(true);return}
 
  if(name==='reservation-mode'){
   const e=appState.exchange;
@@ -229,7 +255,7 @@ async function act(name){
  if(name==='recipient-wishes'){appState.wishTarget=appState.exchange?.my_assignment?.recipient_id;appState.page='wishes';await render();return}
  if(name==='own-wishes'){appState.wishTarget=appState.me.id;appState.page='wishes';await render();return}
  if(name==='chat-giver'){appState.page='messages';appState.chat='giver';await render();return}
- if(name==='logout'){await send('/auth/logout',{});appState.me=null;appState.eid=null;renderAuth();return}
+ if(name==='logout'){await send('/auth/logout',{});unreadRequest++;appState.unread={total:0,exchanges:{}};appState.me=null;appState.eid=null;renderAuth();return}
  if(name==='new-family'){
   popup('Create your group','A private space for friends, colleagues or loved ones.',`<div class="field"><label>Group name</label><input name="name" maxlength="120" required placeholder="e.g. The Office Team"></div>`,'Create group',async d=>{const f=await send('/families',{name:d.get('name')});history.replaceState({},'','#groups/'+f.id);appState.page='family';toast('Group created!');appState.fid=f.id});return;
  }
@@ -264,7 +290,7 @@ document.addEventListener('click',async ev=>{
  const group=ev.target.closest('[data-group]');const page=ev.target.closest('[data-page]');const action=ev.target.closest('[data-action]');const exchange=ev.target.closest('[data-exchange]');const chat=ev.target.closest('[data-chat]');const del=ev.target.closest('[data-delete-wish]');const read=ev.target.closest('[data-read]');
  try{
   if(group){appState.fid=Number(group.dataset.group);appState.eid=appState.exchanges.find(x=>x.family_id===appState.fid)?.id||null;appState.page='family';history.replaceState({},'','#groups/'+appState.fid);await sync(true)}
-  else if(page){appState.page=page.dataset.page;await render()}
+  else if(page){if(page.dataset.page==='messages')await openMessages();else{appState.page=page.dataset.page;await render()}}
   else if(action)await act(action.dataset.action);
   else if(exchange){appState.eid=Number(exchange.dataset.exchange);appState.fid=appState.exchanges.find(e=>e.id===appState.eid)?.family_id;appState.page='family';appState.wishTarget=null;history.replaceState({},'','#exchanges/'+appState.eid);await sync(true)}
   else if(chat){appState.chat=chat.dataset.chat;await render()}
@@ -313,15 +339,17 @@ async function refreshAccess(){
  if(!appState.me||appState.page==='reveal'||refreshing||checkingAccess||modalOpen||document.visibilityState==='hidden')return;
  checkingAccess=true;
  try{
-  const [families,exchanges]=await Promise.all([api('/families'),api('/exchanges')]);
+  const [families,exchanges]=await Promise.all([api('/families'),api('/exchanges'),refreshUnread()]);
   const removed=appState.families.some(f=>!families.some(x=>x.id===f.id))||appState.exchanges.some(e=>!exchanges.some(x=>x.id===e.id));
   if(removed){await sync(true);return}
   const draft=$('#message-form textarea');
-  if(appState.page==='messages'&&!draft?.value.trim()&&!$('#message-form textarea:focus'))await sync();
+  const chatBody=$('#chat-body');const readingEarlier=chatBody&&chatBody.scrollHeight-chatBody.scrollTop-chatBody.clientHeight>50;
+  if(appState.page==='messages'&&!draft?.value.trim()&&!$('#message-form textarea:focus')&&!readingEarlier)await sync();
  }catch(err){if(err.message==='Please sign in'||err.message==='Session expired'){appState.me=null;renderAuth()}}
  finally{checkingAccess=false}
 }
 setInterval(refreshAccess,8000);
 window.addEventListener('focus',refreshAccess);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshAccess()});
 
 if ('serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('/assets/sw.js').catch(()=>{});
