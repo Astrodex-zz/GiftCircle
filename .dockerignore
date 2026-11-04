@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+.venv
+**/__pycache__
+.pytest_cache
+tools
+*.db
+*.db-*
+*.log
+*.sql
+*.dump
+*.tgz
+*.zip

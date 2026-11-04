@@ -1,0 +1,54 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-giftcircle}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-giftcircle}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      MAIL_MODE: ${MAIL_MODE:-smtp}
+      MAIL_FROM: ${MAIL_FROM:-GiftCircle <gifts@example.com>}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SSL: ${SMTP_SSL:-false}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${APP_PORT:-8187}:8000'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-giftcircle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-giftcircle}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-giftcircle} -d ${POSTGRES_DB:-giftcircle}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["devmail"]
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8025:8025'
+    environment:
+      MP_MAX_MESSAGES: 300
+volumes:
+  postgres_data:

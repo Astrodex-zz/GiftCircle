@@ -1,0 +1,37 @@
+# Private configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+# Runtime data, logs and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.sql
+*.dump
+*.backup
+*.bak
+*.log
+*.pid
+*.zip
+*.tgz
+*.tar*
+backups/
+# Local runtimes and generated files
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+dist/
+*.pyc
+.DS_Store
+# Local review helpers and screenshots are deliberately not published
+/tools/*
+!/tools/ui_release_check.py
+!/tools/modal_pointer_check.py
+!/tools/welcome_layout_check.py
