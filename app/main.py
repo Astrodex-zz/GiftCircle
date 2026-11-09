@@ -2,7 +2,6 @@ import hashlib, hmac, os, re, secrets, smtplib, ssl, logging
 from datetime import timedelta, date
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
-from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, Cookie
@@ -94,18 +93,8 @@ def email_send(to,subject,body):
     mail['Date']=formatdate(localtime=False,usegmt=True)
     mail['Message-ID']=make_msgid(domain=sender.rsplit('@',1)[-1])
     mail['Auto-Submitted']='auto-generated'
+    # Keep transactional mail plain text, including complete sign-in/reveal links.
     mail.set_content(body)
-    paragraphs=[]
-    for paragraph in body.split('\n\n'):
-        escaped=html_escape(paragraph).replace('\n','<br>')
-        link=re.search(re.escape(PUBLIC_URL)+r'/[^\s<>]*',paragraph)
-        if link:
-            url=link.group(0)
-            label='Reveal my recipient' if '#reveal=' in url else 'View messages and reply' if '#messages/' in url else 'Accept invitation' if '?invite=' in url else 'Sign in to GiftCircle' if '?login=' in url else 'Open GiftCircle'
-            if paragraph.strip().endswith(url):
-                escaped=f'<a href="{html_escape(url,quote=True)}" style="display:inline-block;background:#175646;color:#fff;padding:13px 22px;border-radius:9px;text-decoration:none;font-weight:bold">{label}</a>'
-        paragraphs.append(f'<p style="margin:0 0 18px;line-height:1.6">{escaped}</p>')
-    mail.add_alternative('<!doctype html><html><body style="margin:0;background:#f6f7f2;font-family:Arial,sans-serif;color:#243d34"><div style="max-width:580px;margin:24px auto;padding:28px;background:#fff;border:1px solid #e2e9e3;border-radius:16px"><p style="color:#277a68;font-size:22px;font-weight:bold">GiftCircle</p><h1 style="font-size:24px">'+html_escape(subject)+'</h1>'+''.join(paragraphs)+'</div></body></html>',subtype='html')
     port=int(os.getenv('SMTP_PORT','587'))
     if os.getenv('SMTP_SSL','false').lower()=='true':
         server=smtplib.SMTP_SSL(host,port,timeout=10,context=ssl.create_default_context())

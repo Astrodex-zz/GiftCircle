@@ -62,7 +62,7 @@ On Windows PowerShell, create the environment and install requirements using `.v
 - Start with `docker compose up -d --build` without the development inbox profile.
 - Back up the PostgreSQL database and private configuration. Keep a separate backup copy and test restoration before relying on it.
 
-Emails include plain text and HTML, a date and unique message ID. Deliverability also depends on the sending provider, domain authentication and recipient filtering; inbox placement cannot be guaranteed. Replies to notification emails are **not** imported. Each notification links to the correct in-app conversation.
+Emails use plain text with complete links, a date and unique message ID. Deliverability also depends on the sending provider, domain authentication and recipient filtering; inbox placement cannot be guaranteed. Replies to notification emails are **not** imported. Each notification links to the correct in-app conversation.
 
 ## Tests
 

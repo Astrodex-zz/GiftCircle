@@ -72,7 +72,7 @@ def test_later_group_invite_includes_saved_welcome_without_exchange_selection(gr
     assert eid in [e['id'] for e in c.get('/api/exchanges').json()]
 
 
-def test_email_headers_and_plain_html_alternatives(monkeypatch):
+def test_email_headers_and_plain_text_links(monkeypatch):
     sent=[]
     class SMTP:
         def __init__(self,*a,**kw):pass
@@ -84,10 +84,18 @@ def test_email_headers_and_plain_html_alternatives(monkeypatch):
     monkeypatch.setattr(main.smtplib,'SMTP',SMTP)
     monkeypatch.setenv('MAIL_MODE','smtp');monkeypatch.setenv('SMTP_HOST','smtp.example.com')
     monkeypatch.setenv('MAIL_FROM','GiftCircle <sender@example.com>')
-    main.email_send('recipient@example.com','A friendly test',f'Hello <friend>\n\nReveal my recipient: {main.PUBLIC_URL}/#reveal=testtoken')
-    mail,options=sent[0]
-    assert mail['Date'] and mail['Message-ID'] and mail['Auto-Submitted']=='auto-generated'
-    assert options['from_addr']=='sender@example.com'
-    assert mail.get_body(preferencelist=('plain',)) is not None
-    html=mail.get_body(preferencelist=('html',)).get_content()
-    assert 'Reveal my recipient</a>' in html and '&lt;friend&gt;' in html
+    from email import policy
+    from email.parser import BytesParser
+    for path in ('/?login=exampletoken#messages/7/group','/?invite=exampletoken','/#reveal=exampletoken','/#messages/7/santa','/#messages/7/group'):
+        body=f'Hello <friend> — a gift for you!\n\nOpen GiftCircle: {main.PUBLIC_URL}{path}'
+        main.email_send('recipient@example.com','A friendly test',body)
+        mail,options=sent[-1]
+        assert mail['Date'] and mail['Message-ID'] and mail['Auto-Submitted']=='auto-generated'
+        assert options['from_addr']=='sender@example.com'
+        # Verify the transmitted MIME round-trip, including Unicode and URL fragments.
+        parsed=BytesParser(policy=policy.default).parsebytes(mail.as_bytes())
+        assert parsed.get_content_type()=='text/plain'
+        assert not parsed.is_multipart()
+        assert parsed.get_body(preferencelist=('html',)) is None
+        assert parsed.get_content().rstrip('\n')==body
+    assert len({mail['Message-ID'] for mail,_ in sent})==5
