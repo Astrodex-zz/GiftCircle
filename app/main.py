@@ -203,6 +203,7 @@ def remove_member(fid:int,uid:int,u:User=Depends(user_or_401),s:DBSession=Depend
     s.execute(delete(WishListState).where(WishListState.exchange_id.in_(ids),WishListState.user_id==uid))
     s.execute(delete(WishAvailability).where(WishAvailability.wish_id.in_(select(Wish.id).where(Wish.exchange_id.in_(ids),Wish.user_id==uid))))
     s.execute(delete(Wish).where(Wish.exchange_id.in_(ids),Wish.user_id==uid))
+    s.execute(delete(RevealAccess).where(RevealAccess.exchange_id.in_(ids),RevealAccess.user_id==uid))
     s.execute(delete(MessageReadState).where(MessageReadState.exchange_id.in_(ids),MessageReadState.user_id==uid))
     s.execute(delete(Message).where(Message.exchange_id.in_(ids),Message.sender_id==uid))
     s.execute(delete(Notification).where(Notification.exchange_id.in_(ids),Notification.user_id==uid))
@@ -215,7 +216,7 @@ def delete_group(fid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
     f=only_owner(s,u,fid)
     ids=list(s.scalars(select(Exchange.id).where(Exchange.family_id==fid)))
     s.execute(delete(PreviousDrawRule).where(or_(PreviousDrawRule.exchange_id.in_(ids),PreviousDrawRule.source_id.in_(ids))))
-    for model in (MessageReadState,RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
+    for model in (RevealAccess,MessageReadState,RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
         s.execute(delete(model).where(model.exchange_id.in_(ids)))
     s.execute(delete(Exchange).where(Exchange.family_id==fid))
     s.execute(delete(Invitation).where(Invitation.family_id==fid))
@@ -308,7 +309,7 @@ def delete_exchange(eid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db))
     if not e:fail(404,'Exchange not found')
     only_owner(s,u,e.family_id)
     s.execute(delete(PreviousDrawRule).where(or_(PreviousDrawRule.exchange_id==eid,PreviousDrawRule.source_id==eid)))
-    for model in (MessageReadState,RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
+    for model in (RevealAccess,MessageReadState,RevealToken,Message,Notification,ExchangeInvitationText,ReservationPolicy,WishListState,WishAvailability,Wish,Exclusion,Assignment,Participant):
         s.execute(delete(model).where(model.exchange_id==eid))
     s.delete(e);s.commit();return {'ok':True}
 
@@ -323,7 +324,12 @@ def reveal_recipient(body:RevealRequest,s:DBSession=Depends(db)):
     a=s.scalar(select(Assignment).where(Assignment.exchange_id==token.exchange_id,Assignment.giver_id==token.giver_id))
     member=s.scalar(select(Membership).where(Membership.family_id==e.family_id,Membership.user_id==token.giver_id)) if e else None
     if not e or not a or not member:fail(404,'This exchange is no longer available')
+    participant=s.scalar(select(Participant).where(Participant.exchange_id==e.id,Participant.user_id==token.giver_id).with_for_update())
+    if not participant:fail(404,'This exchange is no longer available')
+    if not s.get(RevealAccess,(e.id,token.giver_id)):
+        s.add(RevealAccess(exchange_id=e.id,user_id=token.giver_id))
     recipient=s.get(User,a.recipient_id)
+    s.commit()
     return {'exchange_name':e.name,'group_name':s.get(Family,e.family_id).name,'recipient_name':recipient.name,'budget':e.budget,'exchange_date':e.exchange_date}
 
 @app.get('/api/exchanges/{eid}')
@@ -345,6 +351,38 @@ def exchange_detail(eid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db))
             result['my_assignment']={'assignment_id':mine.id,'recipient_id':r.id,'name':r.name}
         if incoming:result['my_santa_conversation']=incoming.id
     return result
+
+@app.get('/api/exchanges/{eid}/organiser-overview')
+def organiser_overview(eid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
+    e=exchange_member(s,u,eid)
+    only_owner(s,u,e.family_id)
+    people=s.execute(select(User.id,User.name).join(Participant,Participant.user_id==User.id)
+        .join(Membership,and_(Membership.user_id==User.id,Membership.family_id==e.family_id))
+        .where(Participant.exchange_id==eid).order_by(User.name,User.id)).all()
+    ideas=dict(s.execute(select(Wish.user_id,func.count(Wish.id)).where(Wish.exchange_id==eid).group_by(Wish.user_id)).all())
+    finalised=set(s.scalars(select(WishListState.user_id).where(WishListState.exchange_id==eid,WishListState.finalised_at!=None)))
+    revealed=set(s.scalars(select(RevealAccess.user_id).where(RevealAccess.exchange_id==eid)))
+    # Query counts only. No message bodies, gift details, counterpart IDs or
+    # per-message timing leave this endpoint.
+    unread={}
+    for channel in ('giver','santa','group'):
+        query=select(Participant.user_id,func.count(Message.id)).select_from(Message)
+        if channel=='group':
+            query=query.join(Participant,Participant.exchange_id==Message.exchange_id).where(Message.kind.in_(['group','announcement']))
+        else:
+            role=Assignment.giver_id if channel=='giver' else Assignment.recipient_id
+            query=query.join(Assignment,and_(Assignment.id==Message.assignment_id,Assignment.exchange_id==Message.exchange_id))
+            query=query.join(Participant,and_(Participant.exchange_id==Message.exchange_id,Participant.user_id==role)).where(Message.kind=='private')
+        query=query.outerjoin(MessageReadState,and_(MessageReadState.exchange_id==Message.exchange_id,
+            MessageReadState.user_id==Participant.user_id,MessageReadState.channel==channel))
+        query=query.where(Message.exchange_id==eid,Message.sender_id!=Participant.user_id,
+            Message.id>func.coalesce(MessageReadState.last_message_id,0)).group_by(Participant.user_id)
+        unread[channel]=dict(s.execute(query).all())
+    return {'participants':[{'id':uid,'name':name,'reveal_used':uid in revealed,
+        'wish_count':ideas.get(uid,0),'list_status':'finalised' if uid in finalised else 'draft',
+        'unread':{channel:unread[channel].get(uid,0) if e.drawn_at or channel=='group' else None
+            for channel in ('giver','santa','group')}} for uid,name in people]}
+
 
 @app.post('/api/exchanges/{eid}/exclusions')
 def set_exclusion(eid:int,body:ExclusionRequest,u:User=Depends(user_or_401),s:DBSession=Depends(db)):

@@ -12,6 +12,7 @@ A self-hosted, open-source gift exchange app for friends, families and work grou
 - Per-exchange Surprise or Show reservations mode.
 - Anonymous giver/recipient conversations, group chat and email notifications with links to reply in the app.
 - Persistent unread counts for each conversation, exchange and the Messages navigation.
+- A compact organiser-only overview of reveal-link use, gift-idea counts, current list status and unread counts by conversation. No gift details, message content or pairings are returned by this overview.
 - Responsive desktop/mobile interface, compact gift rows and an installable app shell.
 - Organiser controls to remove members before a draw, delete an exchange or delete a group and its exchanges.
 
@@ -73,6 +74,7 @@ pytest -q tests
 node --check app/static/app.js
 python tools/ui_release_check.py
 python tools/unread_ui_check.py
+python tools/organiser_ui_check.py
 python tools/modal_pointer_check.py
 python tools/welcome_layout_check.py
 ```
@@ -94,6 +96,7 @@ The browser checks use Playwright with headless Microsoft Edge (`channel='msedge
 ## Operational boundaries
 
 - Draws are final. Create a new exchange rather than resetting a completed draw. People joining later join the group and its undrawn exchanges.
+- Reveal-link usage is recorded only after a successful tap-to-reveal request. Earlier usage is unknown, and using a link does not prove who opened it. Viewing a recipient while signed in does not count as reveal-link usage.
 - Read positions are saved per user, exchange and conversation. Opening one conversation leaves the others unread. Messages written before unread tracking was installed initially appear unread until opened.
 - Unread badges refresh approximately every eight seconds while the app is visible. Polling preserves drafts and avoids replacing a chat while you are reading earlier messages.
 - The service worker caches static assets only. Sign-in, messages and other app functions require a connection.

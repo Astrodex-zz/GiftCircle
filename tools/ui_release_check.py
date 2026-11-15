@@ -15,6 +15,7 @@ window.fetch=async(url,opts={})=>{
  if(path==='/auth/logout'){qa.signedIn=false;return response(result)}
  if(!qa.signedIn)return response({detail:'Please sign in'},false);
  if(path==='/me'){if(method==='PATCH'){qa.profileWrites++;Object.assign(me,data)}result=me}
+ else if(/\/organiser-overview$/.test(path))result={participants:family.members.map((p,i)=>({id:p.id,name:p.name,reveal_used:i===0,wish_count:i===2?0:2,list_status:i===0?'finalised':'draft',unread:{giver:i,santa:0,group:i}}))};
  else if(path==='/messages/unread')result={total:0,exchanges:{}};
  else if(/\/messages\/read\//.test(path))result={ok:true};
  else if(path==='/families')result=qa.removed?[]:[family];

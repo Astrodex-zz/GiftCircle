@@ -159,3 +159,44 @@
  .composer{padding:12px;gap:8px}
  .composer textarea{font-size:16px}
 }
+
+/* Compact organiser-only activity: no horizontal scrolling on phones. */
+.organiser-overview{padding:18px 20px;margin-bottom:20px}
+.organiser-overview .card-title{margin:0;font-size:18px}
+.activity-table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+.activity-caption{text-align:left;font-size:12px;color:#526b65;padding:3px 0 12px}
+.activity-table th,.activity-table td{padding:8px 4px;text-align:center;border-bottom:1px solid var(--border)}
+.activity-table thead th{font-size:12px;color:#526b65;line-height:1.3}
+.activity-table thead th span{display:block;font-weight:400;font-size:11px}
+.activity-table th:first-child{width:27%;text-align:left;overflow-wrap:anywhere}
+.activity-table tbody th{font-weight:650}
+.activity-table tbody tr:last-child>*{border-bottom:0}
+.activity-count{display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 4px;border-radius:6px;font-weight:700;font-variant-numeric:tabular-nums}
+.activity-count.pending{background:#fff0d8;color:#804000}
+.activity-count.clear,.activity-na{color:#708177;font-weight:400}
+.activity-done{color:#175646;font-weight:700}
+.activity-draft{color:#80530e}
+.activity-note{margin:8px 0 0;font-size:11px;line-height:1.4;color:#526b65}
+@container(max-width:620px){
+ .organiser-overview{padding:14px 12px}
+ .activity-table thead tr,.activity-table tbody tr{display:grid;grid-template-columns:repeat(6,minmax(0,1fr))}
+ .activity-table thead th:first-child{display:none}
+ .activity-table th,.activity-table td{width:auto!important;padding:5px 1px;border:0;font-size:11px}
+ .activity-table thead th{font-size:10px;letter-spacing:-.2px}
+ .activity-table thead th span{font-size:10px}
+ .activity-table tbody th{grid-column:1/-1;text-align:left;font-size:13px;padding-top:8px;padding-bottom:0}
+ .activity-table tbody tr{border-top:1px solid var(--border)}
+ .activity-table thead th:first-child+th{display:table-cell}
+ .activity-status{font-size:10px}
+}
+
+.activity-short{display:none}
+.activity-table thead b{font-weight:700}
+@container(max-width:620px){
+ .activity-table .activity-long{display:none}
+ .activity-short{display:inline}
+ .activity-table th,.activity-table td{padding:3px 1px;line-height:1.2}
+ .activity-table tbody th{padding-top:5px;padding-bottom:0;line-height:1.2}
+ .activity-count{height:20px;min-width:20px}
+ .activity-note{font-size:10px}
+}

@@ -155,3 +155,11 @@ class MessageReadState(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id'),primary_key=True)
     channel: Mapped[str] = mapped_column(String(8),primary_key=True)
     last_message_id: Mapped[int] = mapped_column(Integer,default=0)
+
+
+class RevealAccess(Base):
+    """Records successful use of a participant's private reveal link, not identity."""
+    __tablename__='reveal_accesses'
+    exchange_id: Mapped[int] = mapped_column(ForeignKey('exchanges.id'),primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'),primary_key=True)
+    first_used_at: Mapped[datetime] = mapped_column(DateTime,default=utcnow)
