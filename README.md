@@ -9,6 +9,7 @@ A self-hosted, open-source gift exchange app for friends, families and work grou
 - One-to-one gift draws, multiple directional exclusions and protection against repeating a previous draw.
 - Private recipient reveal links with a tap-to-reveal screen.
 - Exchange-specific wish lists, Draft/Finalised status, reservations and purchase tracking.
+- Reopening a finalised list notifies the assigned giver once, including when adding/removing ideas or changing availability. Further draft edits do not repeat the alert; re-finalising still sends the ready notification. Email preferences are respected.
 - Per-exchange Surprise or Show reservations mode.
 - Anonymous giver/recipient conversations, group chat and email notifications with links to reply in the app.
 - Persistent unread counts for each conversation, exchange and the Messages navigation.

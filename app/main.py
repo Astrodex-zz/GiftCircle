@@ -485,6 +485,29 @@ def wishlist_state(s,eid,uid):
         state=WishListState(exchange_id=eid,user_id=uid);s.add(state)
     return state
 
+def reopen_wishlist(s,e,owner_id):
+    """Notify once per finalised-to-draft transition; send only after commit."""
+    state=wishlist_state(s,e.id,owner_id)
+    was_finalised=bool(state.finalised_at)
+    state.finalised_at=None
+    if not was_finalised:return None
+    assignment=s.scalar(select(Assignment).where(Assignment.exchange_id==e.id,Assignment.recipient_id==owner_id))
+    if not assignment:return None
+    title='Your recipient is updating their wish list'
+    detail=f'Your recipient’s previously finalised list for {e.name} is now Draft. Please check their latest gift ideas before shopping.'
+    s.add(Notification(user_id=assignment.giver_id,exchange_id=e.id,title=title,detail=detail))
+    giver=s.get(User,assignment.giver_id)
+    if giver and giver.notify_email:
+        return (giver.email,title,f'{detail}\n\nView your exchange: {PUBLIC_URL}/#exchanges/{e.id}\n\nYou can change email notifications in your profile.')
+    return None
+
+
+def deliver_wishlist_update(delivery):
+    if delivery:
+        try:email_send(*delivery)
+        except Exception:log.exception('Wish-list update email failed; change and in-app notification preserved')
+
+
 def notify_finalised(s,e,owner_id,giver_id):
     owner=s.get(User,owner_id)
     notify(s,giver_id,e.id,'Your recipient’s wish list is finalised',f'Your recipient has finalised their gift ideas for {e.name}. Open GiftCircle to view their list.')
@@ -511,9 +534,9 @@ def finalise_wishlist(eid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db
 
 @app.post('/api/exchanges/{eid}/wish-list/draft')
 def draft_wishlist(eid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
-    exchange_member(s,u,eid)
-    wishlist_state(s,eid,u.id).finalised_at=None
-    s.commit();return {'ok':True,'status':'draft'}
+    e=exchange_member(s,u,eid)
+    delivery=reopen_wishlist(s,e,u.id)
+    s.commit();deliver_wishlist_update(delivery);return {'ok':True,'status':'draft'}
 
 def reservation_mode(s,eid):
     policy=s.get(ReservationPolicy,eid)
@@ -532,7 +555,7 @@ def set_reservation_mode(eid:int,body:ReservationSettings,u:User=Depends(user_or
 
 @app.post('/api/exchanges/{eid}/wishes/{wid}/availability')
 def set_availability(eid:int,wid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
-    exchange_member(s,u,eid)
+    e=exchange_member(s,u,eid)
     if reservation_mode(s,eid)!='show':fail(409,'This control is available in Show reservations mode')
     w=s.scalar(select(Wish).where(Wish.id==wid).with_for_update())
     if not w or w.exchange_id!=eid:fail(404,'Gift idea not found')
@@ -542,8 +565,8 @@ def set_availability(eid:int,wid:int,u:User=Depends(user_or_401),s:DBSession=Dep
     else:
         if w.reserved_by:fail(409,'This gift is reserved. Message your giver before buying it yourself.')
         s.add(WishAvailability(wish_id=wid,exchange_id=eid))
-    wishlist_state(s,eid,u.id).finalised_at=None
-    s.commit();return {'ok':True}
+    delivery=reopen_wishlist(s,e,u.id)
+    s.commit();deliver_wishlist_update(delivery);return {'ok':True}
 
 @app.get('/api/exchanges/{eid}/wishes/{owner_id}')
 def get_wishes(eid:int,owner_id:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
@@ -555,23 +578,23 @@ def get_wishes(eid:int,owner_id:int,u:User=Depends(user_or_401),s:DBSession=Depe
 
 @app.post('/api/exchanges/{eid}/wishes')
 def add_wish(eid:int,body:WishCreate,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
-    exchange_member(s,u,eid)
+    e=exchange_member(s,u,eid)
     if not body.title.strip():fail(422,'Enter a gift idea')
     if body.url:
         link=urlparse(body.url)
         if link.scheme not in ('https','http') or not link.netloc:fail(400,'Use a valid http(s) URL')
-    wishlist_state(s,eid,u.id).finalised_at=None
-    w=Wish(exchange_id=eid,user_id=u.id,title=body.title.strip(),details=body.details,url=body.url,price=body.price);s.add(w);s.commit();return {'id':w.id}
+    delivery=reopen_wishlist(s,e,u.id)
+    w=Wish(exchange_id=eid,user_id=u.id,title=body.title.strip(),details=body.details,url=body.url,price=body.price);s.add(w);s.commit();deliver_wishlist_update(delivery);return {'id':w.id}
 
 @app.delete('/api/exchanges/{eid}/wishes/{wid}')
 def delete_wish(eid:int,wid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
-    exchange_member(s,u,eid);w=s.scalar(select(Wish).where(Wish.id==wid).with_for_update())
+    e=exchange_member(s,u,eid);w=s.scalar(select(Wish).where(Wish.id==wid).with_for_update())
     if not w or w.exchange_id!=eid:fail(404,'Gift idea not found')
     if w.user_id!=u.id:fail(403,'Not your gift idea')
     # The owner must receive the same result whether or not a giver reserved it.
-    wishlist_state(s,eid,u.id).finalised_at=None
+    delivery=reopen_wishlist(s,e,u.id)
     s.execute(delete(WishAvailability).where(WishAvailability.wish_id==wid))
-    s.delete(w);s.commit();return {'ok':True}
+    s.delete(w);s.commit();deliver_wishlist_update(delivery);return {'ok':True}
 
 @app.post('/api/exchanges/{eid}/wishes/{wid}/reserve')
 def reserve(eid:int,wid:int,u:User=Depends(user_or_401),s:DBSession=Depends(db)):
